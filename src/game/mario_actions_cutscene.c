@@ -1,3 +1,4 @@
+#include "hud.h"
 #include <PR/ultratypes.h>
 
 #include "prevent_bss_reordering.h"
@@ -1779,7 +1780,57 @@ enum {
     INTRO_CUTSCENE_SET_MARIO_TO_IDLE
 };
 
+// Mod Blocos: Espaco (botao A) pula a introducao (carta + voo do Lakitu + cano)
+static void remove_intro_objects(void) {
+    const BehaviorScript *alvos[2] = { segmented_to_virtual(bhvBeginningLakitu),
+                                       segmented_to_virtual(bhvBeginningPeach) };
+    for (s32 l = 0; l < NUM_OBJ_LISTS; l++) {
+        struct ObjectNode *head = &gObjectLists[l];
+        for (struct ObjectNode *nd = head->next; nd != head; nd = nd->next) {
+            struct Object *o = (struct Object *) nd;
+            if (o->behavior == alvos[0] || o->behavior == alvos[1]) {
+                obj_mark_for_deletion(o);
+            }
+        }
+    }
+}
+
+static void skip_intro_cutscene(struct MarioState *m) {
+    if (sIntroWarpPipeObj != NULL && m->actionArg >= INTRO_CUTSCENE_RAISE_PIPE
+        && m->actionArg <= INTRO_CUTSCENE_LOWER_PIPE) {
+        obj_mark_for_deletion(sIntroWarpPipeObj);
+    }
+    sIntroWarpPipeObj = NULL;
+    remove_intro_objects();
+    gHudDisplay.flags = HUD_DISPLAY_DEFAULT;
+    m->marioObj->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+    m->statusForCamera->cameraEvent = 0;
+    if (get_dialog_id() >= 0) {
+        reset_dialog_render_state(); // fecha a carta (dialogo 20)
+    }
+    sound_banks_enable(2, 0x0330);
+    // ponto onde a introducao normalmente deixa o jogador
+    m->pos[0] = -1328.0f;
+    m->pos[2] = 4664.0f;
+    m->pos[1] = find_floor(m->pos[0], m->pos[1] + 400.0f, m->pos[2], &m->floor);
+    m->vel[0] = m->vel[1] = m->vel[2] = 0.0f;
+    m->forwardVel = 0.0f;
+    m->faceAngle[1] = 0x8000;
+    vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+    gCamera->cutscene = 0;
+    gCameraMovementFlags &= ~CAM_MOVE_C_UP_MODE;
+    reset_camera(gCurrentArea->camera);
+    set_background_music(gCurrentArea->musicParam, gCurrentArea->musicParam2, 0);
+    play_sound(SOUND_MENU_STAR_SOUND, gDefaultSoundArgs);
+    set_mario_action(m, ACT_IDLE, 0);
+}
+
 static s32 act_intro_cutscene(struct MarioState *m) {
+    if (m->actionArg >= INTRO_CUTSCENE_PEACH_LAKITU_SCENE && m->actionArg < INTRO_CUTSCENE_SET_MARIO_TO_IDLE
+        && (m->controller->buttonPressed & A_BUTTON)) {
+        skip_intro_cutscene(m);
+        return TRUE;
+    }
     switch (m->actionArg) {
         case INTRO_CUTSCENE_HIDE_HUD_AND_MARIO:
             intro_cutscene_hide_hud_and_mario(m);

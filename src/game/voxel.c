@@ -1120,7 +1120,7 @@ static void test_mode_step(void) {
     if (sTestFrame == 30) {
         if (sTestMode == 4) {
             test_build_stress();
-        } else if (sTestMode != 5 && sTestMode != 10) {
+        } else if (sTestMode != 5 && sTestMode != 10 && sTestMode != 11) {
             test_build_scene();
         }
         if (sTestMode == 2 || sTestMode == 4 || sTestMode == 7) {
@@ -1188,6 +1188,12 @@ static void test_mode_step(void) {
         }
         if (sTestFrame > 335 && sTestFrame < 380) { ct->stickY = 64; ct->stickMag = 64; ct->stickX = 0; }
         if (sTestFrame == 380) printf("[blocos] sem agachar: y=%.0f acao=%08X\n", m->pos[1], m->action);
+    }
+    // modo 11: introducao; aperta Espaco (A) no frame 120 para pular
+    if (sTestMode == 11 && sTestFrame == 120) {
+        gPlayer1Controller->buttonPressed |= A_BUTTON;
+        gPlayer1Controller->buttonDown |= A_BUTTON;
+        printf("[blocos] apertou Espaco na intro (acao=%08X)\n", m->action);
     }
     // modo 4: gira a camera continuamente (estresse de renderizacao)
     if (sTestMode == 4 && sTestFrame > 30) {

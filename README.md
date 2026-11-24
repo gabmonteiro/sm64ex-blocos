@@ -35,7 +35,7 @@ Portas, placas, diálogos, canhões, postes, estrelas e inimigos continuam funci
 | Ação | Teclado / mouse |
 |---|---|
 | Andar | `W` `A` `S` `D` |
-| Pular / avançar diálogo | `Espaço` |
+| Pular / avançar diálogo / pular a introdução / começar na tela de título | `Espaço` |
 | Correr | `Ctrl` (segurando) |
 | Agachar (não cai das beiradas) | `Shift` (segurando) |
 | Ler placas / conversar | `E` (ou `,`) |
@@ -161,6 +161,7 @@ BLOCOS_TESTE=10 ./sm64.us.f3dex2e --skip-intro --savepath /tmp/teste_blocos
 | 6 / 8 / 9 | Câmera de retrato, de frente para o personagem (sem item / espada / arco) |
 | 7 | Golpe de espada e tiro com o arco em 1ª pessoa |
 | 10 | Mede caminhada, corrida e altura do pulo, e testa agachar na beirada |
+| 11 | Introdução de save novo: aperta Espaço para pulá-la (rode sem `--skip-intro`) |
 
 ## Créditos
 

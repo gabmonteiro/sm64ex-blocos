@@ -175,7 +175,8 @@ int intro_default(void) {
 #endif
     print_intro_text();
 
-    if (gPlayer1Controller->buttonPressed & START_BUTTON) {
+    // Mod Blocos: Espaco (botao A) tambem comeca
+    if (gPlayer1Controller->buttonPressed & (START_BUTTON | A_BUTTON)) {
         play_sound(SOUND_MENU_STAR_SOUND, gDefaultSoundArgs);
         sp1C = 100 + gDebugLevelSelect;
 #ifndef VERSION_JP        
