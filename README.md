@@ -136,6 +136,8 @@ Algumas decisões que podem ajudar quem for estudar o código:
 
 - O porte ignora pedidos de limpar o z-buffer no meio do frame, então o item na mão em 1ª pessoa é montado
   no espaço da câmera, com as faces ordenadas de trás para a frente.
+- A grade de blocos tem um deslocamento vertical por fase/área: o primeiro bloco colocado no chão alinha a
+  grade com aquele chão (salvo no `blocos.dat`), então os blocos ficam rentes ao terreno.
 - O modelo do personagem é desenhado com escala 0,25, então as unidades locais dos ossos são 4× maiores que as
   do mundo.
 - Não religue `G_ZBUFFER` no fim do HUD: o skybox do frame seguinte passa a gravar profundidade e esconde a
@@ -162,6 +164,8 @@ BLOCOS_TESTE=10 ./sm64.us.f3dex2e --skip-intro --savepath /tmp/teste_blocos
 | 7 | Golpe de espada e tiro com o arco em 1ª pessoa |
 | 10 | Mede caminhada, corrida e altura do pulo, e testa agachar na beirada |
 | 11 | Introdução de save novo: aperta Espaço para pulá-la (rode sem `--skip-intro`) |
+| 12 | Torre: pula sem parar colocando bloco embaixo de si (olhando para baixo) |
+| 13 | Item na mão em 1ª pessoa; `BLOCOS_SLOT`, `BLOCOS_GOLPE=0..1` (congela o golpe) e `BLOCOS_CARGA` (carga do arco) |
 
 ## Créditos
 

@@ -69,6 +69,7 @@ s32 voxel_raycast(Vec3f orig, Vec3f dir, f32 maxLen, f32 *tHit, s32 cell[3]);
 s32 voxel_fp_active(void);
 void voxel_fp_eye(Vec3f out);
 void voxel_fp_look(Vec3f out);
+void voxel_fp_bob(f32 *bx, f32 *by);
 void voxel_shot_ray(Vec3f orig, Vec3f dir);
 const char *voxel_block_tex_name(u8 block, s32 face);
 u8 voxel_held_item(void);

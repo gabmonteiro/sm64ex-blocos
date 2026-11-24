@@ -724,6 +724,14 @@ s32 voxel_items_update(u8 held, u32 mb, u32 pressed, u32 released, s32 allowInpu
     s32 consumedLeft = FALSE;
     sFrame++;
     if (sSwing > 0) sSwing--;
+    // teste: congela o golpe (BLOCOS_GOLPE=0..1) ou a carga do arco (BLOCOS_CARGA=frames)
+    {
+        static f32 fp = -2.0f, fc = -2.0f;
+        if (fp < -1.5f) { const char *e = getenv("BLOCOS_GOLPE"); fp = e ? (f32) atof(e) : -1.0f; }
+        if (fc < -1.5f) { const char *e = getenv("BLOCOS_CARGA"); fc = e ? (f32) atof(e) : -1.0f; }
+        if (fp >= 0.0f) sSwing = (s32)(SWING_FRAMES * (1.0f - fp) + 0.5f);
+        if (fc >= 0.0f && held == ITEM_ARCO) { sCharge = (s32) fc; mb |= 4; }
+    }
     if (sAttackCooldown > 0) sAttackCooldown--;
 
     if (allowInput && held == ITEM_ESPADA && (pressed & 1)) {
@@ -791,18 +799,41 @@ static struct Quad sVmQuads[VM_MAX_QUADS];
 static Vtx sVmVtx[VM_MAX_QUADS * 4 + 64];
 static Gfx sVmGfx[VM_MAX_QUADS / 8 * 9 + 128];
 
-// animacao do golpe: o item desce em arco, girando, e volta
-static void apply_swing(struct Xform *x, f32 amp) {
-    if (sSwing <= 0) return;
+// Animacao de golpe: o braco "corta" para baixo e para a esquerda, girando em
+// torno da mao (pivo). Entrada rapida e volta suave (curvas com raiz de p).
+static f32 sEquip = 1.0f;     // 0 = item abaixado (trocando), 1 = na mao
+static u8 sLastHeld = 0xFF;
+static f32 sDraw = 0.0f;      // mistura suave entre pose normal e pose de puxar o arco
+
+static void swing_matrix(M3 r, Vec3f tr, f32 amp) {
+    m3_ident(r);
+    tr[0] = tr[1] = tr[2] = 0.0f;
+    if (sSwing <= 0 || amp <= 0.0f) return;
     f32 p = 1.0f - (f32) sSwing / SWING_FRAMES;
-    f32 s1 = sinf(sqrtf(p) * 3.14159265f);
-    f32 s2 = sinf(p * p * 3.14159265f);
-    m3_prerot(x->r, 1, -0.30f * s2 * amp);
-    m3_prerot(x->r, 2, -0.35f * s1 * amp);
-    m3_prerot(x->r, 0, -1.20f * s1 * amp);
-    x->t[0] += -24.0f * s1 * amp;
-    x->t[1] += 9.0f * sinf(sqrtf(p) * 2.0f * 3.14159265f) * amp;
-    x->t[2] += -14.0f * sinf(p * 3.14159265f) * amp;
+    f32 s1 = sinf(sqrtf(p) * 3.14159265f);   // sobe rapido, volta devagar
+    f32 s2 = sinf(p * p * 3.14159265f);      // atrasado: torcao do pulso
+    m3_prerot(r, 0, -0.80f * s1 * amp);      // ponta desce para frente
+    m3_prerot(r, 2, 0.45f * s1 * amp);       // deita a lamina para dentro
+    m3_prerot(r, 1, -0.50f * s2 * amp);      // torce o pulso no fim
+    tr[0] = -40.0f * s1 * amp;
+    tr[1] = 9.0f * sinf(sqrtf(p) * 2.0f * 3.14159265f) * amp;
+    tr[2] = -16.0f * sinf(p * 3.14159265f) * amp;
+}
+
+// posiciona o item: 'grip' (ponto do item no espaco local) fica na mao 'anchor',
+// e o golpe gira tudo em torno da mao
+static void place_in_hand(struct Xform *x, const Vec3f anchor, const f32 grip[3], f32 amp, f32 bx, f32 by) {
+    M3 rs;
+    Vec3f tr, g, gr;
+    swing_matrix(rs, tr, amp);
+    xf_dir(x, grip, g);
+    for (s32 i = 0; i < 3; i++) g[i] *= x->s;
+    for (s32 i = 0; i < 3; i++) gr[i] = -(rs[i][0] * g[0] + rs[i][1] * g[1] + rs[i][2] * g[2]);
+    m3_mul(x->r, rs, x->r);
+    f32 drop = (1.0f - sEquip) * 70.0f;
+    x->t[0] = anchor[0] + tr[0] + gr[0] + bx;
+    x->t[1] = anchor[1] + tr[1] + gr[1] + by - drop;
+    x->t[2] = anchor[2] + tr[2] + gr[2];
 }
 
 static void vm_textured_cube(Gfx **gp, Vtx **vp, u8 block, const struct Xform *x) {
@@ -854,13 +885,21 @@ void voxel_items_render_viewmodel(u8 held) {
     if (!voxel_fp_active()) {
         return;
     }
+    // troca de item: abaixa e sobe de novo
+    if (held != sLastHeld) {
+        if (sLastHeld != 0xFF) sEquip = 0.0f;
+        sLastHeld = held;
+    }
+    sEquip = fminf(1.0f, sEquip + 0.2f);
+    sDraw += ((sCharge > 0 && held == ITEM_ARCO ? 1.0f : 0.0f) - sDraw) * 0.35f;
+
     Mtx *proj = alloc_display_list(sizeof(Mtx));
     Mtx *ident = alloc_display_list(sizeof(Mtx));
     if (proj == NULL || ident == NULL) {
         return;
     }
     u16 perspNorm;
-    guPerspective(proj, &perspNorm, 50.0f, 4.0f / 3.0f, 8.0f, 1000.0f, 1.0f);
+    guPerspective(proj, &perspNorm, 70.0f, 4.0f / 3.0f, 8.0f, 1000.0f, 1.0f);
     guMtxIdent(ident);
 
     Gfx *g = gDisplayListHead;
@@ -876,73 +915,66 @@ void voxel_items_render_viewmodel(u8 held) {
     Vtx *v = sVmVtx;
     struct QuadSink k = { sVmQuads, 0, VM_MAX_QUADS, { -0.3f, 0.75f, 0.6f } };
     vec3f_normalize(k.light);
-    // balanco suave ao andar
-    f32 bob = 0;
-    struct MarioState *m = gMarioState;
-    if (m && (m->action & ACT_GROUP_MASK) == ACT_GROUP_MOVING) {
-        bob = sinf(sFrame * 0.45f) * fminf(m->forwardVel, 32.0f) * 0.07f;
-    }
+    f32 bx, by;
+    voxel_fp_bob(&bx, &by);
 
     struct Xform x;
     if (held == ITEM_ESPADA) {
-        // sprite: cabo embaixo/esquerda, ponta em cima/direita -> ponta para cima, frente e esquerda
-        Vec3f diag = { -0.42f, 0.80f, -0.45f }, perp = { 0.75f, 0.35f, 0.3f };
+        // sprite: cabo no canto inferior esquerdo, ponta no superior direito.
+        // Na mao: ponta para cima, para frente e um pouco para dentro da tela.
+        Vec3f diag = { -0.38f, 0.82f, -0.42f }, perp = { 0.80f, 0.30f, 0.30f };
+        Vec3f anchor = { 44.0f, -44.0f, -62.0f };
+        const f32 grip[3] = { -30.0f, -30.0f, 0.0f };
         sprite_basis(&x, diag, perp);
-        x.t[0] = 50.0f + bob; x.t[1] = -38.0f + fabsf(bob) * 0.6f; x.t[2] = -92.0f;
-        x.s = 0.46f;
-        apply_swing(&x, 1.0f);
+        x.s = 0.56f;
+        place_in_hand(&x, anchor, grip, 1.0f, bx, by);
         if (!add_sprite(&k, &x, SPR_ESPADA)) {
             m3_ident(x.r);
             m3_prerot(x.r, 1, 0.35f);
             m3_prerot(x.r, 2, 0.55f);
             m3_prerot(x.r, 0, -0.55f);
-            x.t[0] = 50.0f + bob; x.t[1] = -50.0f; x.t[2] = -82.0f;
-            x.s = 0.72f;
-            apply_swing(&x, 1.0f);
+            x.s = 0.62f;
+            const f32 grip2[3] = { 0.0f, 10.0f, 0.0f };
+            place_in_hand(&x, anchor, grip2, 1.0f, bx, by);
             model_sword(&k, &x);
         }
-    } else if (held == ITEM_ARCO && sprite_mesh(SPR_ARCO)) {
-        // sprite do arco: corda na diagonal (+X+Y) fica quase vertical, curva para a frente
-        f32 c = voxel_items_charge();
-        s32 drawing = sCharge > 0;
-        s32 spr = !drawing ? SPR_ARCO : (c >= 0.9f ? SPR_ARCO3 : (c >= 0.65f ? SPR_ARCO2 : SPR_ARCO1));
-        if (!sprite_mesh(spr)) spr = SPR_ARCO;
-        Vec3f diag = { drawing ? -0.10f : -0.35f, 1.0f, drawing ? 0.25f : 0.1f };
-        Vec3f perp = { drawing ? -0.25f : -0.6f, 0.0f, -1.0f };
-        sprite_basis(&x, diag, perp);
-        x.t[0] = drawing ? 6.0f : 32.0f + bob;
-        x.t[1] = drawing ? -14.0f : -30.0f;
-        x.t[2] = -80.0f;
-        x.s = 0.60f;
-        if (drawing && c >= 1.0f) {
-            x.t[0] += sinf(sFrame * 2.3f) * 0.7f;
-            x.t[1] += cosf(sFrame * 3.1f) * 0.7f;
-        }
-        apply_swing(&x, 0.5f);
-        add_sprite(&k, &x, spr);
     } else if (held == ITEM_ARCO) {
         f32 c = voxel_items_charge();
-        f32 drawing = sCharge > 0 ? 1.0f : 0.0f;
-        m3_ident(x.r);
-        m3_prerot(x.r, 1, -0.95f + 0.25f * drawing);
-        m3_prerot(x.r, 2, 0.30f - 0.18f * drawing);
-        x.t[0] = 34.0f - 22.0f * drawing + bob;
-        x.t[1] = -34.0f + 10.0f * drawing;
-        x.t[2] = -80.0f;
-        x.s = 0.62f;
-        if (c >= 1.0f) { // tremida de arco totalmente puxado
-            x.t[0] += sinf(sFrame * 2.3f) * 0.7f;
-            x.t[1] += cosf(sFrame * 3.1f) * 0.7f;
+        f32 d = sDraw;
+        s32 spr = sCharge <= 0 ? SPR_ARCO : (c >= 0.9f ? SPR_ARCO3 : (c >= 0.65f ? SPR_ARCO2 : SPR_ARCO1));
+        if (!sprite_mesh(spr)) spr = SPR_ARCO;
+        // pose normal (de lado, a direita) -> pose de puxar (centro, inclinado, perto da camera)
+        Vec3f diag, perp, anchor;
+        // perp = para onde a curva do arco aponta: para a esquerda (rosto do sprite visivel)
+        // e, ao puxar, mais para dentro da tela (a flecha aponta para a mira)
+        const f32 dI[3] = { -0.30f, 1.0f, 0.15f }, dD[3] = { -0.12f, 1.0f, 0.25f };
+        const f32 pI[3] = { -1.0f, 0.0f, -0.30f }, pD[3] = { -0.75f, 0.05f, -1.0f };
+        const f32 aI[3] = { 34.0f, -32.0f, -72.0f }, aD[3] = { 6.0f, -16.0f, -64.0f };
+        for (s32 i = 0; i < 3; i++) {
+            diag[i] = dI[i] + (dD[i] - dI[i]) * d;
+            perp[i] = pI[i] + (pD[i] - pI[i]) * d;
+            anchor[i] = aI[i] + (aD[i] - aI[i]) * d;
         }
-        apply_swing(&x, 0.5f);
-        model_bow(&k, &x, c, sCharge > 0);
+        anchor[2] += 10.0f * c * d;  // recua para perto do rosto conforme puxa
+        if (sCharge > 0 && c > 0.1f) { // treme cada vez mais conforme a carga
+            anchor[1] += sinf(sFrame * 1.35f) * (c - 0.1f) * 1.6f;
+            anchor[0] += cosf(sFrame * 1.1f) * (c - 0.1f) * 0.8f;
+        }
+        sprite_basis(&x, diag, perp);
+        x.s = 0.56f;
+        const f32 grip[3] = { 0.0f, 0.0f, 0.0f };
+        place_in_hand(&x, anchor, grip, 0.4f, bx * (1.0f - d), by * (1.0f - d));
+        if (!add_sprite(&k, &x, spr)) {
+            model_bow(&k, &x, c, sCharge > 0);
+        }
     } else if (held > BLOCO_AR && held < BLOCO_COUNT) {
         m3_ident(x.r);
         m3_prerot(x.r, 1, 0.78f);
         m3_prerot(x.r, 0, 0.30f);
-        x.t[0] = 46.0f + bob; x.t[1] = -40.0f + fabsf(bob) * 0.6f; x.t[2] = -78.0f;
         x.s = 24.0f;
-        apply_swing(&x, 0.6f);
+        Vec3f anchor = { 44.0f, -38.0f, -66.0f };
+        const f32 grip[3] = { 0.0f, 0.0f, 0.0f };
+        place_in_hand(&x, anchor, grip, 0.75f, bx, by);
         vm_textured_cube(&g, &v, held, &x);
     }
 

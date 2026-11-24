@@ -63,6 +63,11 @@ static s32 sBlockCount;      // total (todas as fases)
 static s32 sAreaCount;       // blocos na fase/area atual
 static s32 sMinY, sMaxY;     // limites verticais na area atual
 static u64 sAreaPrefix = ~0ULL;
+// deslocamento vertical da grade (0..99) por fase/area: o primeiro bloco colocado
+// no chao alinha a grade com aquele chao, entao os blocos ficam rentes ao terreno
+static s32 sYOff = 0;
+static s16 sYOffTable[256 * 16];
+static u8 sYOffInit = FALSE;
 static u8 sMeshDirty = TRUE;
 static u8 sLoaded = FALSE;
 static s32 sSaveTimer = -1;
@@ -71,6 +76,7 @@ u8 gVoxelFirstPerson = FALSE;
 static u8 sFpApplied = FALSE; // 1a pessoa realmente aplicada neste frame
 u8 gVoxelHideMario = FALSE;
 static s16 sFpYaw, sFpPitch;
+static f32 sBobPhase, sBobAmp;
 
 u32 gVoxelMouseButtons = 0;
 s32 gVoxelMouseWheel = 0;
@@ -244,8 +250,17 @@ static s32 table_remove(u64 k) {
     return 1;
 }
 
+static inline s32 yoff_index(void) {
+    return ((u8) gCurrLevelNum) * 16 + (gCurrAreaIndex & 0xF);
+}
+
 static void recount_area(void) {
     u64 prefix = area_prefix();
+    if (!sYOffInit) {
+        for (s32 i = 0; i < 256 * 16; i++) sYOffTable[i] = -1;
+        sYOffInit = TRUE;
+    }
+    sYOff = sYOffTable[yoff_index()] >= 0 ? sYOffTable[yoff_index()] : 0;
     sAreaCount = 0;
     sMinY = 0x7FFF;
     sMaxY = -0x7FFF;
@@ -268,6 +283,9 @@ static void schedule_save(void) {
 }
 
 static s32 vox_set(s32 x, s32 y, s32 z, u8 type) {
+    if (sAreaCount == 0) {
+        sYOffTable[yoff_index()] = (s16) sYOff; // fixa o alinhamento da grade nesta area
+    }
     s32 r = table_set(vox_key(x, y, z), type);
     if (r < 0) {
         return FALSE;
@@ -300,7 +318,8 @@ s32 voxel_any_blocks(void) {
 /* Salvar / carregar                                                         */
 /* ------------------------------------------------------------------------- */
 
-#define BLOCOS_MAGIC 0x534F434CU // "LCOS"
+#define BLOCOS_MAGIC 0x534F434CU    // "LCOS" (v1: so blocos)
+#define BLOCOS_MAGIC_V2 0x324F434CU // "LCO2" (v2: blocos + alinhamento da grade)
 
 static void blocos_path(char *out, size_t len) {
     // fs_get_write_path respeita --savepath (sys_user_path nao)
@@ -314,12 +333,22 @@ static void voxel_save(void) {
     if (!f) {
         return;
     }
-    u32 hdr[2] = { BLOCOS_MAGIC, (u32) sBlockCount };
+    u32 hdr[2] = { BLOCOS_MAGIC_V2, (u32) sBlockCount };
     fwrite(hdr, sizeof(hdr), 1, f);
     for (u32 i = 0; i < VOX_TABLE_SIZE; i++) {
         if (sTable[i].type) {
             fwrite(&sTable[i].key, sizeof(u64), 1, f);
             fwrite(&sTable[i].type, 1, 1, f);
+        }
+    }
+    u32 nOff = 0;
+    for (s32 i = 0; i < 256 * 16; i++) if (sYOffTable[i] >= 0) nOff++;
+    fwrite(&nOff, sizeof(nOff), 1, f);
+    for (s32 i = 0; i < 256 * 16; i++) {
+        if (sYOffTable[i] >= 0) {
+            u16 idx = (u16) i;
+            fwrite(&idx, sizeof(idx), 1, f);
+            fwrite(&sYOffTable[i], sizeof(s16), 1, f);
         }
     }
     fclose(f);
@@ -334,7 +363,11 @@ static void voxel_load(void) {
         return;
     }
     u32 hdr[2];
-    if (fread(hdr, sizeof(hdr), 1, f) == 1 && hdr[0] == BLOCOS_MAGIC) {
+    if (!sYOffInit) {
+        for (s32 i = 0; i < 256 * 16; i++) sYOffTable[i] = -1;
+        sYOffInit = TRUE;
+    }
+    if (fread(hdr, sizeof(hdr), 1, f) == 1 && (hdr[0] == BLOCOS_MAGIC || hdr[0] == BLOCOS_MAGIC_V2)) {
         for (u32 n = 0; n < hdr[1] && n < VOX_MAX_BLOCKS; n++) {
             u64 k;
             u8 t;
@@ -343,6 +376,15 @@ static void voxel_load(void) {
             }
             if (t > BLOCO_AR && t < BLOCO_COUNT) {
                 table_set(k, t);
+            }
+        }
+        u32 nOff;
+        if (hdr[0] == BLOCOS_MAGIC_V2 && fread(&nOff, sizeof(nOff), 1, f) == 1) {
+            for (u32 n = 0; n < nOff && n < 256 * 16; n++) {
+                u16 idx;
+                s16 off;
+                if (fread(&idx, sizeof(idx), 1, f) != 1 || fread(&off, sizeof(off), 1, f) != 1) break;
+                if (idx < 256 * 16 && off >= 0 && off < S) sYOffTable[idx] = off;
             }
         }
     }
@@ -383,13 +425,13 @@ f32 voxel_find_floor(f32 x, f32 y, f32 z, struct Surface **pfloor) {
     }
     s32 bx = to_block(x), bz = to_block(z);
     // chao aceito se altura <= y + 78 (mesma folga do jogo original)
-    s32 by = (s32) floorf((y + 78.0f) / (f32) S) - 1;
+    s32 by = (s32) floorf((y + 78.0f - sYOff) / (f32) S) - 1;
     if (by > sMaxY) {
         by = sMaxY;
     }
     for (; by >= sMinY; by--) {
         if (vox_get(bx, by, bz)) {
-            f32 h = (f32)((by + 1) * S);
+            f32 h = (f32)((by + 1) * S + sYOff);
             struct Surface *s = new_surf();
             s16 x0 = bx * S, x1 = x0 + S, z0 = bz * S, z1 = z0 + S, hh = (s16) h;
             s->normal.y = 1.0f;
@@ -413,13 +455,13 @@ f32 voxel_find_ceil(f32 x, f32 y, f32 z, struct Surface **pceil) {
     }
     s32 bx = to_block(x), bz = to_block(z);
     // teto aceito se altura >= y - 78 (mesma folga do jogo original)
-    s32 by = (s32) ceilf((y - 78.0f) / (f32) S);
+    s32 by = (s32) ceilf((y - 78.0f - sYOff) / (f32) S);
     if (by < sMinY) {
         by = sMinY;
     }
     for (; by <= sMaxY; by++) {
         if (vox_get(bx, by, bz)) {
-            f32 h = (f32)(by * S);
+            f32 h = (f32)(by * S + sYOff);
             struct Surface *s = new_surf();
             s16 x0 = bx * S, x1 = x0 + S, z0 = bz * S, z1 = z0 + S, hh = (s16) h;
             s->normal.y = -1.0f;
@@ -441,8 +483,8 @@ static struct Surface *make_wall(f32 nx, f32 nz, f32 cx, f32 cz, s32 by) {
     s->normal.x = nx;
     s->normal.z = nz;
     s->originOffset = -(nx * cx + nz * cz);
-    s->lowerY = by * S;
-    s->upperY = (by + 1) * S;
+    s->lowerY = by * S + sYOff;
+    s->upperY = (by + 1) * S + sYOff;
     if (fabsf(nx) > fabsf(nz)) {
         s->flags = SURFACE_FLAG_X_PROJECTION;
     }
@@ -464,7 +506,7 @@ s32 voxel_find_walls(struct WallCollisionData *d) {
     if (r <= 0.0f) {
         return 0;
     }
-    f32 yy = d->y + d->offsetY;
+    f32 yy = d->y + d->offsetY - sYOff;
     s32 by = to_block(yy);
     if (by < sMinY || by > sMaxY) {
         return 0;
@@ -675,7 +717,7 @@ static void rebuild_mesh(void) {
                 orient_quad(c, uv, sFaceDir[fr->face]);
                 u8 sh = sFaceShade[fr->face];
                 for (s32 k = 0; k < 4; k++) {
-                    set_vtx(v++, (fr->x + c[k][0]) * S, (fr->y + c[k][1]) * S, (fr->z + c[k][2]) * S,
+                    set_vtx(v++, (fr->x + c[k][0]) * S, (fr->y + c[k][1]) * S + sYOff, (fr->z + c[k][2]) * S,
                             uv[k][0] << 5, uv[k][1] << 5, sh, sh, sh, 255);
                 }
             }
@@ -744,7 +786,7 @@ static void build_highlight(void) {
     }
     u8 col = sHasTarget ? 20 : 235;
     f32 e = 1.5f, t = 2.5f; // folga e espessura das arestas
-    f32 x0 = cell[0] * S - e, y0 = cell[1] * S - e, z0 = cell[2] * S - e;
+    f32 x0 = cell[0] * S - e, y0 = cell[1] * S + sYOff - e, z0 = cell[2] * S - e;
     f32 x1 = x0 + S + 2 * e, y1 = y0 + S + 2 * e, z1 = z0 + S + 2 * e;
 
     Gfx *g = sHlGfx;
@@ -799,7 +841,7 @@ static f32 fp_eye_height(struct MarioState *m) {
 static s32 mario_overlaps_cell(s32 cx, s32 cy, s32 cz) {
     struct MarioState *m = gMarioState;
     f32 r = 36.0f, h = 155.0f;
-    f32 x0 = cx * S, y0 = cy * S, z0 = cz * S;
+    f32 x0 = cx * S, y0 = cy * S + sYOff, z0 = cz * S;
     return m->pos[0] + r > x0 && m->pos[0] - r < x0 + S && m->pos[2] + r > z0 && m->pos[2] - r < z0 + S
            && m->pos[1] + h > y0 && m->pos[1] < y0 + S;
 }
@@ -835,6 +877,23 @@ static void update_target(void) {
     Vec3f hitPos, ray;
     ray[0] = dir[0] * maxDist; ray[1] = dir[1] * maxDist; ray[2] = dir[2] * maxDist;
     find_surface_on_ray(orig, ray, &surf, hitPos);
+    // olhando quase reto para baixo a busca por raio do jogo falha: acha o chao direto
+    if (surf == NULL && dir[1] < -0.6f) {
+        struct Surface *fl;
+        f32 px = orig[0], pz = orig[2];
+        for (s32 it = 0; it < 3; it++) {
+            f32 fh = find_floor(px, orig[1], pz, &fl);
+            if (fl == NULL) break;
+            f32 t = (orig[1] - fh) / -dir[1];
+            if (t < 0.0f || t > maxDist) { fl = NULL; break; }
+            px = orig[0] + dir[0] * t;
+            pz = orig[2] + dir[2] * t;
+            hitPos[0] = px; hitPos[1] = fh; hitPos[2] = pz;
+        }
+        if (fl != NULL) {
+            surf = fl;
+        }
+    }
     if (surf) {
         f32 dx = hitPos[0] - orig[0], dy = hitPos[1] - orig[1], dz = hitPos[2] - orig[2];
         terrainDist = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -842,18 +901,19 @@ static void update_target(void) {
 
     // DDA pela grade de blocos (Amanatides & Woo)
     if (sAreaCount > 0) {
+        Vec3f oo = { orig[0], orig[1] - sYOff, orig[2] };
         s32 cell[3], step[3], prev[3];
         f32 tMax[3], tDelta[3];
         for (s32 i = 0; i < 3; i++) {
-            cell[i] = to_block(orig[i]);
+            cell[i] = to_block(oo[i]);
             prev[i] = cell[i];
             if (dir[i] > 1e-6f) {
                 step[i] = 1;
-                tMax[i] = ((cell[i] + 1) * S - orig[i]) / dir[i];
+                tMax[i] = ((cell[i] + 1) * S - oo[i]) / dir[i];
                 tDelta[i] = S / dir[i];
             } else if (dir[i] < -1e-6f) {
                 step[i] = -1;
-                tMax[i] = (cell[i] * S - orig[i]) / dir[i];
+                tMax[i] = (cell[i] * S - oo[i]) / dir[i];
                 tDelta[i] = -S / dir[i];
             } else {
                 step[i] = 0;
@@ -883,8 +943,12 @@ static void update_target(void) {
     // sem bloco: coloca encostado no terreno
     if (surf && terrainDist <= maxDist) {
         s32 c[3];
+        if (sAreaCount == 0 && surf->normal.y > 0.7f) {
+            s32 fy = (s32) floorf(hitPos[1] + 0.5f);
+            sYOff = ((fy % S) + S) % S;
+        }
         c[0] = to_block(hitPos[0] + surf->normal.x * 2.0f);
-        c[1] = to_block(hitPos[1] + surf->normal.y * 2.0f);
+        c[1] = to_block(hitPos[1] + surf->normal.y * 2.0f - sYOff);
         c[2] = to_block(hitPos[2] + surf->normal.z * 2.0f);
         if (!vox_get(c[0], c[1], c[2]) && !mario_overlaps_cell(c[0], c[1], c[2])) {
             sHasPlace = TRUE;
@@ -913,6 +977,12 @@ s32 voxel_fp_active(void) {
     return sFpApplied;
 }
 
+// balanco da mao em 1a pessoa (espaco da camera)
+void voxel_fp_bob(f32 *bx, f32 *by) {
+    *bx = sinf(sBobPhase) * 2.6f * sBobAmp;
+    *by = -fabsf(cosf(sBobPhase)) * 2.4f * sBobAmp;
+}
+
 void voxel_fp_eye(Vec3f out) {
     out[0] = gMarioState->pos[0];
     out[1] = gMarioState->pos[1] + fp_eye_height(gMarioState);
@@ -929,13 +999,14 @@ s32 voxel_raycast(Vec3f orig, Vec3f dir, f32 maxLen, f32 *tHit, s32 cell[3]) {
         return 0;
     }
     s32 c[3], step[3];
+    Vec3f oo = { orig[0], orig[1] - sYOff, orig[2] };
     f32 tMax[3], tDelta[3];
     for (s32 i = 0; i < 3; i++) {
-        c[i] = to_block(orig[i]);
+        c[i] = to_block(oo[i]);
         if (dir[i] > 1e-6f) {
-            step[i] = 1; tMax[i] = ((c[i] + 1) * S - orig[i]) / dir[i]; tDelta[i] = S / dir[i];
+            step[i] = 1; tMax[i] = ((c[i] + 1) * S - oo[i]) / dir[i]; tDelta[i] = S / dir[i];
         } else if (dir[i] < -1e-6f) {
-            step[i] = -1; tMax[i] = (c[i] * S - orig[i]) / dir[i]; tDelta[i] = -S / dir[i];
+            step[i] = -1; tMax[i] = (c[i] * S - oo[i]) / dir[i]; tDelta[i] = -S / dir[i];
         } else {
             step[i] = 0; tMax[i] = tDelta[i] = 1e30f;
         }
@@ -1032,6 +1103,19 @@ void voxel_camera_override(struct Camera *c) {
     eye[1] = m->pos[1] + fp_eye_height(m);
     eye[2] = m->pos[2];
     fp_dir(d);
+    // balanco ao andar: avanca com a distancia percorrida no chao
+    {
+        s32 onGround = !(m->action & ACT_FLAG_AIR) && !(m->action & ACT_FLAG_SWIMMING);
+        f32 speed = onGround ? m->forwardVel : 0.0f;
+        f32 target = speed > 1.0f ? fminf(speed / 14.4f, 1.3f) : 0.0f;
+        sBobAmp += (target - sBobAmp) * 0.25f;
+        sBobPhase += speed * 0.075f;
+        f32 rx = -coss(sFpYaw), rz = sins(sFpYaw);
+        f32 sw = sinf(sBobPhase) * 2.2f * sBobAmp;
+        eye[0] += rx * sw;
+        eye[2] += rz * sw;
+        eye[1] -= fabsf(cosf(sBobPhase)) * 3.2f * sBobAmp;
+    }
     focus[0] = eye[0] + d[0] * 200.0f;
     focus[1] = eye[1] + d[1] * 200.0f;
     focus[2] = eye[2] + d[2] * 200.0f;
@@ -1120,7 +1204,7 @@ static void test_mode_step(void) {
     if (sTestFrame == 30) {
         if (sTestMode == 4) {
             test_build_stress();
-        } else if (sTestMode != 5 && sTestMode != 10 && sTestMode != 11) {
+        } else if (sTestMode != 5 && sTestMode != 10 && sTestMode != 11 && sTestMode != 12 && sTestMode != 13) {
             test_build_scene();
         }
         if (sTestMode == 2 || sTestMode == 4 || sTestMode == 7) {
@@ -1188,6 +1272,33 @@ static void test_mode_step(void) {
         }
         if (sTestFrame > 335 && sTestFrame < 380) { ct->stickY = 64; ct->stickMag = 64; ct->stickX = 0; }
         if (sTestFrame == 380) printf("[blocos] sem agachar: y=%.0f acao=%08X\n", m->pos[1], m->action);
+    }
+    // modo 13: retrato do item na mao em 1a pessoa (slot por BLOCOS_SLOT)
+    if (sTestMode == 13 && sTestFrame == 40) {
+        const char *e = getenv("BLOCOS_SLOT");
+        gVoxelFirstPerson = TRUE;
+        sFpYaw = m->faceAngle[1];
+        sFpPitch = -0x0600;
+        select_slot(e ? atoi(e) : 0);
+    }
+    // modo 12: torre - pula e coloca bloco embaixo de si sem parar
+    if (sTestMode == 12) {
+        if (sTestFrame == 40) {
+            gVoxelFirstPerson = TRUE;
+            sFpYaw = m->faceAngle[1];
+            sFpPitch = -0x3F00;
+            select_slot(2);
+        }
+        if (sTestFrame > 45 && sTestFrame < 420) {
+            sFpPitch = -0x3F00;
+            gPlayer1Controller->buttonDown |= A_BUTTON;
+            gVoxelMouseButtons = SDL_BUTTON_RMASK;
+        }
+        if (sTestFrame == 420) gVoxelMouseButtons = 0;
+        if ((sTestFrame % 15) == 0 && sTestFrame > 40) {
+            printf("[blocos] torre f=%d y=%.0f chao=%.0f blocos=%d yoff=%d\n", sTestFrame, m->pos[1], m->floorHeight,
+                   sAreaCount, sYOff);
+        }
     }
     // modo 11: introducao; aperta Espaco (A) no frame 120 para pular
     if (sTestMode == 11 && sTestFrame == 120) {
@@ -1331,8 +1442,8 @@ void voxel_update(void) {
         sFpYaw -= gPlayer1Controller->extStickX * 6;
         p += gPlayer1Controller->extStickY * 5;
 #endif
-        if (p > 0x3800) p = 0x3800;
-        if (p < -0x3800) p = -0x3800;
+        if (p > 0x3F00) p = 0x3F00;
+        if (p < -0x3F00) p = -0x3F00;
         sFpPitch = p;
         if (gCurrentArea && gCurrentArea->camera && sFpApplied) {
             gCurrentArea->camera->yaw = sFpYaw + 0x8000;
@@ -1381,7 +1492,7 @@ void voxel_update(void) {
                 play_sound(SOUND_ACTION_TERRAIN_LANDING, gDefaultSoundArgs);
                 voxel_items_swing();
             }
-            sPlaceCooldown = 7;
+            sPlaceCooldown = 6;
             update_target();
         }
         if ((pressed & SDL_BUTTON_MMASK) && sHasTarget && isBlock) {
