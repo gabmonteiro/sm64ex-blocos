@@ -12,6 +12,7 @@
 #include "engine/surface_collision.h"
 #include "game_init.h"
 #include "interaction.h"
+#include "voxel.h"
 #include "level_update.h"
 #include "mario.h"
 #include "mario_step.h"
@@ -892,7 +893,7 @@ u32 interact_warp_door(struct MarioState *m, UNUSED u32 interactType, struct Obj
     s16 warpDoorId = o->oBehParams >> 24;
     u32 actionArg;
 
-    if (m->action == ACT_WALKING || m->action == ACT_DECELERATING) {
+    if (m->action == ACT_WALKING || m->action == ACT_DECELERATING || m->action == ACT_BLOCO_GROUND) {
         if (warpDoorId == 1 && !(saveFlags & SAVE_FLAG_UNLOCKED_UPSTAIRS_DOOR)) {
             if (!(saveFlags & SAVE_FLAG_HAVE_KEY_2)) {
                 if (!sDisplayingDoorText) {
@@ -922,7 +923,7 @@ u32 interact_warp_door(struct MarioState *m, UNUSED u32 interactType, struct Obj
             doorAction = ACT_UNLOCKING_KEY_DOOR;
         }
 
-        if (m->action == ACT_WALKING || m->action == ACT_DECELERATING) {
+        if (m->action == ACT_WALKING || m->action == ACT_DECELERATING || m->action == ACT_BLOCO_GROUND) {
             actionArg = should_push_or_pull_door(m, o) + 0x00000004;
 
             if (doorAction == 0) {
@@ -986,7 +987,7 @@ u32 interact_door(struct MarioState *m, UNUSED u32 interactType, struct Object *
     s16 requiredNumStars = o->oBehParams >> 24;
     s16 numStars = save_file_get_total_star_count(gCurrSaveFileNum - 1, COURSE_MIN - 1, COURSE_MAX - 1);
 
-    if (m->action == ACT_WALKING || m->action == ACT_DECELERATING) {
+    if (m->action == ACT_WALKING || m->action == ACT_DECELERATING || m->action == ACT_BLOCO_GROUND) {
         if (numStars >= requiredNumStars) {
             u32 actionArg = should_push_or_pull_door(m, o);
             u32 enterDoorAction;
@@ -1628,6 +1629,10 @@ u32 interact_grabbable(struct MarioState *m, u32 interactType, struct Object *o)
 
 u32 mario_can_talk(struct MarioState *m, u32 arg) {
     s16 val6;
+
+    if (m->action == ACT_BLOCO_GROUND) {
+        return TRUE;
+    }
 
     if ((m->action & ACT_FLAG_IDLE) != 0x00000000) {
         return TRUE;

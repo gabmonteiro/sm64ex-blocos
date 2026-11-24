@@ -5,6 +5,7 @@
 #include "prevent_bss_reordering.h"
 #include "sm64.h"
 #include "camera.h"
+#include "voxel.h"
 #include "seq_ids.h"
 #include "dialog_ids.h"
 #include "audio/external.h"
@@ -3241,6 +3242,7 @@ void update_camera(struct Camera *c) {
     update_lakitu(c);
 
     gLakituState.lastFrameAction = sMarioCamState->action;
+    voxel_camera_override(c);
 }
 
 /**

@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <PR/ultratypes.h>
 #include <PR/gbi.h>
 
@@ -2846,5 +2847,9 @@ s32 lvl_init_menu_values_and_cursor_pos(UNUSED s32 arg, UNUSED s32 unused) {
  */
 s32 lvl_update_obj_and_load_file_selected(UNUSED s32 arg, UNUSED s32 unused) {
     area_update_objects();
+    // Mod Blocos: modo de teste automatico escolhe o arquivo A
+    if (getenv("BLOCOS_TESTE") != NULL) {
+        return 1;
+    }
     return sSelectedFileNum;
 }

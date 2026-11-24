@@ -8,6 +8,7 @@
 #include "memory.h"
 #include "print.h"
 #include "rendering_graph_node.h"
+#include "voxel.h"
 #include "shadow.h"
 #include "sm64.h"
 
@@ -175,6 +176,7 @@ static void geo_process_master_list_sub(struct GraphNodeMasterList *node) {
  * render modes of layers.
  */
 static void geo_append_display_list(void *displayList, s16 layer) {
+    displayList = (void *) voxel_char_substitute((const Gfx *) displayList);
 
 #ifdef F3DEX_GBI_2
     gSPLookAt(gDisplayListHead++, &lookAt);
@@ -317,6 +319,20 @@ static void geo_process_camera(struct GraphNodeCamera *node) {
     gMatStackIndex++;
     mtxf_to_mtx(mtx, gMatStack[gMatStackIndex]);
     gMatStackFixed[gMatStackIndex] = mtx;
+    {
+        Gfx *voxelDl = voxel_world_dl();
+        if (voxelDl != NULL) {
+            geo_append_display_list(voxelDl, LAYER_OPAQUE);
+        }
+        voxelDl = voxel_highlight_dl();
+        if (voxelDl != NULL) {
+            geo_append_display_list(voxelDl, LAYER_OPAQUE);
+        }
+        voxelDl = voxel_items_world_dl();
+        if (voxelDl != NULL) {
+            geo_append_display_list(voxelDl, LAYER_OPAQUE);
+        }
+    }
     if (node->fnNode.node.children != 0) {
         gCurGraphNodeCamera = node;
         node->matrixPtr = &gMatStack[gMatStackIndex];

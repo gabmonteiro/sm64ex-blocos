@@ -14,6 +14,7 @@
 
 #include "controller_api.h"
 #include "controller_sdl.h"
+#include "../../game/voxel.h"
 #include "../configfile.h"
 #include "../platform.h"
 #include "../fs/fs.h"
@@ -153,17 +154,19 @@ static void controller_sdl_read(OSContPad *pad) {
     }
 
 #ifdef BETTERCAMERA
-    if (newcam_mouse == 1 && sCurrPlayMode != 2)
+    if ((newcam_mouse == 1 || voxel_wants_mouse()) && sCurrPlayMode != 2)
+#else
+    if (voxel_wants_mouse() && sCurrPlayMode != 2)
+#endif
         SDL_SetRelativeMouseMode(SDL_TRUE);
     else
         SDL_SetRelativeMouseMode(SDL_FALSE);
-#endif
 
     u32 mouse = SDL_GetRelativeMouseState(&mouse_x, &mouse_y);
 
-    for (u32 i = 0; i < num_mouse_binds; ++i)
-        if (mouse & SDL_BUTTON(mouse_binds[i][0]))
-            pad->button |= mouse_binds[i][1];
+    // Mod Blocos: os botoes do mouse quebram/colocam blocos, entao nao
+    // viram botoes do controle (antes: esquerdo = B, direito = A).
+    gVoxelMouseButtons = mouse;
 
     // remember buttons that changed from 0 to 1
     last_mouse = (mouse_buttons ^ mouse) & mouse;

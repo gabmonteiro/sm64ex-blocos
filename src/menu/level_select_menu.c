@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <PR/ultratypes.h>
 
 #include "audio/external.h"
@@ -160,6 +161,11 @@ s16 level_select_input_loop(void) {
 
 int intro_default(void) {
     s32 sp1C = 0;
+
+    // Mod Blocos: modo de teste automatico pula a tela de titulo
+    if (getenv("BLOCOS_TESTE") != NULL) {
+        return 100;
+    }
 
 #ifndef VERSION_JP
     if (D_U_801A7C34 == 1) {

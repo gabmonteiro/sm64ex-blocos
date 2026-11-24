@@ -8,6 +8,7 @@
 #include "surface_collision.h"
 #include "surface_load.h"
 #include "math_util.h"
+#include "game/voxel.h"
 
 /**************************************************
  *                      WALLS                     *
@@ -211,6 +212,9 @@ s32 find_wall_collisions(struct WallCollisionData *colData) {
     node = gStaticSurfacePartition[cellZ][cellX][SPATIAL_PARTITION_WALLS].next;
     numCollisions += find_wall_collisions_from_list(node, colData);
 
+    // Blocos do mod.
+    numCollisions += voxel_find_walls(colData);
+
     // Increment the debug tracker.
     gNumCalls.wall += 1;
 
@@ -342,6 +346,15 @@ f32 find_ceil(f32 posX, f32 posY, f32 posZ, struct Surface **pceil) {
     if (dynamicHeight < height) {
         ceil = dynamicCeil;
         height = dynamicHeight;
+    }
+
+    {
+        struct Surface *voxelCeil;
+        f32 voxelHeight = voxel_find_ceil(posX, posY, posZ, &voxelCeil);
+        if (voxelCeil != NULL && voxelHeight < height) {
+            ceil = voxelCeil;
+            height = voxelHeight;
+        }
     }
 
     *pceil = ceil;
@@ -570,6 +583,16 @@ f32 find_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfloor) {
     if (dynamicHeight > height) {
         floor = dynamicFloor;
         height = dynamicHeight;
+    }
+
+    {
+        struct Surface *voxelFloor;
+        f32 voxelHeight = voxel_find_floor(xPos, yPos, zPos, &voxelFloor);
+        if (voxelFloor != NULL && voxelHeight > height) {
+            voxelFloor->room = floor != NULL ? floor->room : 0;
+            floor = voxelFloor;
+            height = voxelHeight;
+        }
     }
 
     *pfloor = floor;

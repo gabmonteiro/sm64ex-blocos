@@ -6,6 +6,7 @@
 #include "dialog_ids.h"
 #include "audio/external.h"
 #include "level_update.h"
+#include "voxel.h"
 #include "game_init.h"
 #include "level_update.h"
 #include "main.h"
@@ -980,6 +981,7 @@ s32 play_mode_normal(void) {
         gHudDisplay.timer += 1;
     }
 
+    voxel_update();
     area_update_objects();
     update_hud_values();
 

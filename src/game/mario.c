@@ -16,6 +16,7 @@
 #include "level_update.h"
 #include "main.h"
 #include "mario.h"
+#include "voxel.h"
 #include "mario_actions_airborne.h"
 #include "mario_actions_automatic.h"
 #include "mario_actions_cutscene.h"
@@ -1770,6 +1771,7 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         // which can lead to unexpected sub-frame behavior. Could potentially hang
         // if a loop of actions were found, but there has not been a situation found.
         while (inLoop) {
+            voxel_move_convert(gMarioState);
             switch (gMarioState->action & ACT_GROUP_MASK) {
                 case ACT_GROUP_STATIONARY:
                     inLoop = mario_execute_stationary_action(gMarioState);

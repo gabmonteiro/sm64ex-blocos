@@ -29,6 +29,8 @@
 #include <unistd.h>
 
 #include "gfx_window_manager_api.h"
+
+extern int gVoxelMouseWheel;
 #include "gfx_screen_config.h"
 #include "../pc_main.h"
 #include "../configfile.h"
@@ -262,6 +264,9 @@ static void gfx_sdl_handle_events(void) {
                             break;
                     }
                 }
+                break;
+            case SDL_MOUSEWHEEL:
+                gVoxelMouseWheel += event.wheel.y;
                 break;
             case SDL_QUIT:
                 game_exit();

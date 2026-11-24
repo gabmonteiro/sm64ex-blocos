@@ -11,6 +11,7 @@
 #include "interaction.h"
 #include "level_update.h"
 #include "mario.h"
+#include "voxel.h"
 #include "mario_step.h"
 #include "save_file.h"
 #include "thread6.h"
@@ -2122,6 +2123,7 @@ s32 mario_execute_airborne_action(struct MarioState *m) {
 
     /* clang-format off */
     switch (m->action) {
+        case ACT_BLOCO_AIR:            cancel = act_bloco_air(m);            break;
         case ACT_JUMP:                 cancel = act_jump(m);                 break;
         case ACT_DOUBLE_JUMP:          cancel = act_double_jump(m);          break;
         case ACT_FREEFALL:             cancel = act_freefall(m);             break;

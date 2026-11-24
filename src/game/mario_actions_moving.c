@@ -2,6 +2,7 @@
 
 #include "sm64.h"
 #include "mario.h"
+#include "voxel.h"
 #include "audio/external.h"
 #include "engine/math_util.h"
 #include "engine/surface_collision.h"
@@ -1987,6 +1988,7 @@ s32 mario_execute_moving_action(struct MarioState *m) {
 
     /* clang-format off */
     switch (m->action) {
+        case ACT_BLOCO_GROUND:         cancel = act_bloco_ground(m);         break;
         case ACT_WALKING:                  cancel = act_walking(m);                  break;
         case ACT_HOLD_WALKING:             cancel = act_hold_walking(m);             break;
         case ACT_HOLD_HEAVY_WALKING:       cancel = act_hold_heavy_walking(m);       break;

@@ -10,6 +10,7 @@
 #include "print.h"
 #include "ingame_menu.h"
 #include "hud.h"
+#include "voxel.h"
 #include "segment2.h"
 #include "area.h"
 #include "save_file.h"
@@ -477,5 +478,7 @@ void render_hud(void) {
         if (hudDisplayFlags & HUD_DISPLAY_FLAG_TIMER && configHUD) {
             render_hud_timer();
         }
+
+        voxel_render_hud();
     }
 }
