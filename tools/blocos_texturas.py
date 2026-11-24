@@ -259,6 +259,75 @@ def icone_arco():
             px[x, y] = corda
     return img
 
+def _arco_base(img, puxada):
+    """Desenha o arco (curva aberta para cima/esquerda) e a corda puxada para baixo/direita."""
+    px = img.load()
+    madeira, clara, escura, corda = (150, 104, 58, 255), (182, 134, 80, 255), (74, 46, 30, 255), (230, 230, 222, 255)
+    A, B, C = (1.5, 13.5), (13.5, 1.5), (1.0 - puxada * 0.5, 1.0 - puxada * 0.5)
+    for i in range(60):
+        t = i / 59.0
+        x = (1 - t) ** 2 * A[0] + 2 * (1 - t) * t * C[0] + t * t * B[0]
+        y = (1 - t) ** 2 * A[1] + 2 * (1 - t) * t * C[1] + t * t * B[1]
+        xi, yi = int(round(x)), int(round(y))
+        c = escura if 0.42 < t < 0.58 else madeira
+        px[xi, yi] = c
+        if xi + 1 < N and yi + 1 < N and px[xi + 1, yi + 1][3] == 0:
+            px[xi + 1, yi + 1] = clara if c == madeira else escura
+    # corda: das pontas ate o ponto de encaixe puxado na diagonal (+x,+y)
+    nock = (7.5 + puxada * 2.2, 7.5 + puxada * 2.2)
+    for (a, b) in ((A, nock), (nock, B)):
+        for i in range(24):
+            t = i / 23.0
+            x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+            xi, yi = int(round(x)), int(round(y))
+            if 0 <= xi < N and 0 <= yi < N and px[xi, yi][3] == 0:
+                px[xi, yi] = corda
+    return nock
+
+
+def _arco_puxando(estagio):
+    img = Image.new("RGBA", (N, N), (0, 0, 0, 0))
+    puxada = (1.0, 1.6, 2.2)[estagio]
+    nock = _arco_base(img, puxada)
+    px = img.load()
+    # flecha encaixada apontando para cima/esquerda
+    haste, ponta, pena = (196, 160, 104, 255), (150, 156, 164, 255), (236, 236, 236, 255)
+    nx, ny = int(round(nock[0])), int(round(nock[1]))
+    for i in range(12):
+        x, y = nx - i, ny - i
+        if 0 <= x < N and 0 <= y < N:
+            px[x, y] = ponta if i >= 9 else (pena if i < 2 else haste)
+    if 0 <= nx - 11 < N and 0 <= ny - 10 < N:
+        px[nx - 11, ny - 10] = ponta
+    return img
+
+
+def arco_1():
+    return _arco_puxando(0)
+
+
+def arco_2():
+    return _arco_puxando(1)
+
+
+def arco_3():
+    return _arco_puxando(2)
+
+
+def flecha():
+    """Textura 32x32 da flecha (entidade). Faixa lateral em u 0-16, v 0-5: cauda a esquerda, ponta a direita."""
+    img = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    px = img.load()
+    haste, ponta, ponta2, pena, pena2 = (196, 160, 104, 255), (150, 156, 164, 255), (110, 116, 124, 255), (236, 236, 236, 255), (200, 60, 50, 255)
+    for x in range(2, 13):
+        px[x, 2] = haste
+    for (x, y) in ((0, 0), (1, 1), (0, 4), (1, 3), (2, 1), (2, 3), (3, 0), (3, 4), (4, 1), (4, 3)):
+        px[x, y] = pena if (x + y) % 2 else pena2
+    for (x, y) in ((12, 1), (12, 3), (13, 1), (13, 2), (13, 3), (14, 2), (15, 2), (12, 2)):
+        px[x, y] = ponta if x < 14 else ponta2
+    return img
+
+
 TEXTURAS = {
     "grama_topo": grama_topo,
     "grama_lado": grama_lado,
@@ -273,6 +342,10 @@ TEXTURAS = {
     "folhas": folhas,
     "espada": icone_espada,
     "arco": icone_arco,
+    "arco_1": arco_1,
+    "arco_2": arco_2,
+    "arco_3": arco_3,
+    "flecha": flecha,
 }
 
 

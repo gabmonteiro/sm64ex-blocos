@@ -31,6 +31,8 @@
 #include "engine/math_util.h"
 #include "engine/surface_collision.h"
 #include "audio/external.h"
+#include "pc/fs/fs.h"
+#include <stb/stb_image.h>
 
 /* ------------------------------------------------------------------------- */
 /* Matematica pequena                                                        */
@@ -257,6 +259,131 @@ static void model_arrow(struct QuadSink *k, const struct Xform *x) {
     add_beam(k, x, tail, hs, 1.3f, 196, 160, 104);
     add_beam(k, x, hs, tip, 3.0f, 150, 156, 164);
     add_beam(k, x, tail, fl, 3.2f, 236, 236, 236);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Sprites extrudados (itens desenhados pixel a pixel a partir do PNG)       */
+/* ------------------------------------------------------------------------- */
+/*
+ * O icone do item (o mesmo da hotbar) vira um modelo 3D: cada pixel opaco
+ * vira um cubinho, com frente/verso e so as bordas expostas. Assim, um
+ * texture pack instalado (tools/importar_texturepack.py) muda a espada e o
+ * arco na mao automaticamente, igual ao sprite do pack.
+ */
+
+enum { SPR_ESPADA, SPR_ARCO, SPR_ARCO1, SPR_ARCO2, SPR_ARCO3, SPR_COUNT };
+static const char *sSprPaths[SPR_COUNT] = {
+    "gfx/textures/blocos/espada.rgba16.png",
+    "gfx/textures/blocos/arco.rgba16.png",
+    "gfx/textures/blocos/arco_1.rgba16.png",
+    "gfx/textures/blocos/arco_2.rgba16.png",
+    "gfx/textures/blocos/arco_3.rgba16.png",
+};
+
+#define SPR_MAX 32
+#define SPR_MAX_QUADS 2400
+
+struct SprQuad {
+    f32 p[4][3];
+    f32 n[3];
+    u8 c[3];
+};
+
+struct SpriteMesh {
+    u8 tried, ok;
+    s32 count;
+    struct SprQuad *q;
+};
+static struct SpriteMesh sSprites[SPR_COUNT];
+
+static void spr_quad(struct SpriteMesh *m, f32 x0, f32 y0, f32 z0, f32 x1, f32 y1, f32 z1, s32 face, const u8 c[3]) {
+    if (m->count >= SPR_MAX_QUADS) return;
+    struct SprQuad *q = &m->q[m->count++];
+    f32 lo[3] = { x0, y0, z0 }, hi[3] = { x1, y1, z1 };
+    for (s32 k = 0; k < 4; k++) {
+        for (s32 i = 0; i < 3; i++) {
+            q->p[k][i] = sBoxFace[face][k][i] ? hi[i] : lo[i];
+        }
+    }
+    memcpy(q->n, sBoxN[face], sizeof(q->n));
+    memcpy(q->c, c, 3);
+}
+
+// monta a malha extrudada: o sprite ocupa 96 unidades de lado, centrado na origem
+static struct SpriteMesh *sprite_mesh(s32 id) {
+    struct SpriteMesh *m = &sSprites[id];
+    if (m->tried) return m->ok ? m : NULL;
+    m->tried = TRUE;
+    uint64_t size = 0;
+    u8 *file = fs_load_file(sSprPaths[id], &size);
+    if (!file) return NULL;
+    s32 w, h;
+    u8 *img = stbi_load_from_memory(file, (int) size, &w, &h, NULL, 4);
+    free(file);
+    if (!img) return NULL;
+    s32 n = w < h ? w : h;           // usa o quadrado do topo (packs animados)
+    s32 step = (n + SPR_MAX - 1) / SPR_MAX;
+    s32 g = n / step;                // resolucao da grade (<= 32)
+    static u8 grid[SPR_MAX][SPR_MAX][4];
+    for (s32 r = 0; r < g; r++) {
+        for (s32 c = 0; c < g; c++) {
+            u8 *p = &img[((r * step) * w + c * step) * 4];
+            memcpy(grid[r][c], p, 4);
+        }
+    }
+    stbi_image_free(img);
+    m->q = malloc(sizeof(struct SprQuad) * SPR_MAX_QUADS);
+    if (!m->q) return NULL;
+    f32 ps = 96.0f / g, t = 3.0f;    // tamanho do pixel e meia espessura
+#define OPAQ(rr, cc) ((rr) >= 0 && (rr) < g && (cc) >= 0 && (cc) < g && grid[rr][cc][3] >= 128)
+    for (s32 r = 0; r < g; r++) {
+        for (s32 c = 0; c < g; c++) {
+            if (!OPAQ(r, c)) continue;
+            f32 x0 = (c - g / 2.0f) * ps, x1 = x0 + ps;
+            f32 y1 = (g / 2.0f - r) * ps, y0 = y1 - ps;
+            const u8 *col = grid[r][c];
+            spr_quad(m, x0, y0, -t, x1, y1, t, 4, col); // frente (+Z)
+            spr_quad(m, x0, y0, -t, x1, y1, t, 5, col); // verso
+            if (!OPAQ(r, c + 1)) spr_quad(m, x0, y0, -t, x1, y1, t, 0, col);
+            if (!OPAQ(r, c - 1)) spr_quad(m, x0, y0, -t, x1, y1, t, 1, col);
+            if (!OPAQ(r - 1, c)) spr_quad(m, x0, y0, -t, x1, y1, t, 2, col);
+            if (!OPAQ(r + 1, c)) spr_quad(m, x0, y0, -t, x1, y1, t, 3, col);
+        }
+    }
+#undef OPAQ
+    m->ok = m->count > 0;
+    return m->ok ? m : NULL;
+}
+
+static s32 add_sprite(struct QuadSink *k, const struct Xform *x, s32 id) {
+    struct SpriteMesh *m = sprite_mesh(id);
+    if (!m) return FALSE;
+    for (s32 i = 0; i < m->count; i++) {
+        Vec3f p[4], n;
+        for (s32 c = 0; c < 4; c++) xf_point(x, m->q[i].p[c], p[c]);
+        xf_dir(x, m->q[i].n, n);
+        sink_quad(k, p, n, m->q[i].c);
+    }
+    return TRUE;
+}
+
+// base do sprite: a diagonal do sprite (+X+Y) vira 'diag' e a outra diagonal (-X+Y) vira 'perp'
+static void sprite_basis(struct Xform *x, Vec3f diag, Vec3f perpHint) {
+    Vec3f d, q, nrm, ax, ay;
+    vec3f_copy(d, diag);
+    vec3f_normalize(d);
+    vec3f_cross(nrm, d, perpHint);
+    vec3f_normalize(nrm);
+    vec3f_cross(q, nrm, d);  // q perpendicular a d, no plano de perpHint
+    for (s32 i = 0; i < 3; i++) {
+        ax[i] = (d[i] - q[i]) * 0.70710678f;
+        ay[i] = (d[i] + q[i]) * 0.70710678f;
+    }
+    for (s32 r = 0; r < 3; r++) {
+        x->r[r][0] = ax[r];
+        x->r[r][1] = ay[r];
+        x->r[r][2] = nrm[r];
+    }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -515,51 +642,60 @@ static void step_arrow(struct Arrow *a) {
 /* Flechas no mundo                                                          */
 /* ------------------------------------------------------------------------- */
 
-#define ARROW_QUADS 18
-static struct Quad sArrowQuads[MAX_ARROWS * ARROW_QUADS];
-static Vtx sArrowVtx[MAX_ARROWS * ARROW_QUADS * 4];
-static Gfx sArrowGfx[MAX_ARROWS * ARROW_QUADS / 8 * 9 + 32];
+// Flecha no mundo: dois planos cruzados com a faixa lateral da textura
+// "flecha" (32x32: u 0-16, v 0-5, cauda a esquerda e ponta a direita).
+static Vtx sArrowVtx[MAX_ARROWS * 8];
+static Gfx sArrowGfx[MAX_ARROWS * 4 + 32];
 static u8 sArrowDlValid;
 
 static void build_arrows_dl(void) {
-    struct QuadSink k = { sArrowQuads, 0, MAX_ARROWS * ARROW_QUADS, { 0.36f, 0.86f, 0.36f } };
+    Gfx *g = sArrowGfx;
+    Vtx *v = sArrowVtx;
+    s32 n = 0;
+    gDPPipeSync(g++);
+    gSPClearGeometryMode(g++, G_LIGHTING | G_CULL_BACK);
+    gSPSetGeometryMode(g++, G_SHADE);
+    gDPSetCombineMode(g++, G_CC_MODULATERGBA, G_CC_MODULATERGBA);
+    gDPSetTextureFilter(g++, G_TF_POINT);
+    gSPTexture(g++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
+    gDPLoadTextureBlock(g++, "textures/blocos/flecha.rgba16", G_IM_FMT_RGBA, G_IM_SIZ_16b, 32, 32, 0,
+                        G_TX_CLAMP | G_TX_NOMIRROR, G_TX_CLAMP | G_TX_NOMIRROR, 5, 5, G_TX_NOLOD, G_TX_NOLOD);
     for (s32 i = 0; i < MAX_ARROWS; i++) {
         struct Arrow *a = &sArrows[i];
         if (!a->active) continue;
-        Vec3f d;
+        Vec3f d, up = { 0, 1, 0 }, side, up2;
         vec3f_copy(d, a->vel);
         if (vec3f_length(d) < 0.001f) { d[0] = 1; d[1] = 0; d[2] = 0; }
         vec3f_normalize(d);
-        struct Xform x;
-        // eixo X do modelo = direcao da flecha
-        Vec3f up = { 0, 1, 0 }, side, up2;
         if (fabsf(d[1]) > 0.95f) { up[0] = 1; up[1] = 0; }
         vec3f_cross(side, d, up);
         vec3f_normalize(side);
         vec3f_cross(up2, side, d);
-        for (s32 r = 0; r < 3; r++) {
-            x.r[r][0] = d[r];
-            x.r[r][1] = up2[r];
-            x.r[r][2] = side[r];
+        const f32 L = 32.0f, H = 5.0f; // meia largura e meia altura (unidades)
+        const u8 white[3] = { 255, 255, 255 };
+        Vtx *bv = v;
+        for (s32 plane = 0; plane < 2; plane++) {
+            f32 *e = plane ? side : up2;
+            for (s32 c = 0; c < 4; c++) {
+                f32 sx = (c == 1 || c == 2) ? 1.0f : -1.0f;  // -1 cauda, +1 ponta
+                f32 sy = (c >= 2) ? 1.0f : -1.0f;
+                f32 px = a->pos[0] + d[0] * L * sx + e[0] * H * sy;
+                f32 py = a->pos[1] + d[1] * L * sx + e[1] * H * sy;
+                f32 pz = a->pos[2] + d[2] * L * sx + e[2] * H * sy;
+                set_vtx(v++, px, py, pz, (sx > 0 ? 16 : 0) << 5, (sy > 0 ? 0 : 5) << 5, white);
+            }
         }
-        vec3f_copy(x.t, a->pos);
-        x.s = 0.9f;
-        model_arrow(&k, &x);
+        gSPVertex(g++, bv, 8, 0);
+        gSP2Triangles(g++, 0, 1, 2, 0, 0, 2, 3, 0);
+        gSP2Triangles(g++, 4, 5, 6, 0, 4, 6, 7, 0);
+        n++;
     }
-    sArrowDlValid = FALSE;
-    if (k.n == 0) return;
-    Gfx *g = sArrowGfx;
-    Vtx *v = sArrowVtx;
-    gDPPipeSync(g++);
     gSPTexture(g++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_OFF);
-    gSPClearGeometryMode(g++, G_LIGHTING);
-    gSPSetGeometryMode(g++, G_SHADE | G_CULL_BACK);
-    gDPSetCombineMode(g++, G_CC_SHADE, G_CC_SHADE);
-    g = emit_quads(g, &v, sArrowQuads, k.n, 1.0f);
+    gDPSetTextureFilter(g++, G_TF_BILERP);
     gDPPipeSync(g++);
-    gSPSetGeometryMode(g++, G_LIGHTING);
+    gSPSetGeometryMode(g++, G_LIGHTING | G_CULL_BACK);
     gSPEndDisplayList(g++);
-    sArrowDlValid = TRUE;
+    sArrowDlValid = n > 0;
 }
 
 Gfx *voxel_items_world_dl(void) {
@@ -650,7 +786,7 @@ void voxel_items_clear_arrows(void) {
 /* Item na mao (1a pessoa)                                                   */
 /* ------------------------------------------------------------------------- */
 
-#define VM_MAX_QUADS 256
+#define VM_MAX_QUADS 2600
 static struct Quad sVmQuads[VM_MAX_QUADS];
 static Vtx sVmVtx[VM_MAX_QUADS * 4 + 64];
 static Gfx sVmGfx[VM_MAX_QUADS / 8 * 9 + 128];
@@ -749,14 +885,41 @@ void voxel_items_render_viewmodel(u8 held) {
 
     struct Xform x;
     if (held == ITEM_ESPADA) {
-        m3_ident(x.r);
-        m3_prerot(x.r, 1, 0.35f);
-        m3_prerot(x.r, 2, 0.55f);
-        m3_prerot(x.r, 0, -0.55f);
-        x.t[0] = 50.0f + bob; x.t[1] = -50.0f + fabsf(bob) * 0.6f; x.t[2] = -82.0f;
-        x.s = 0.72f;
+        // sprite: cabo embaixo/esquerda, ponta em cima/direita -> ponta para cima, frente e esquerda
+        Vec3f diag = { -0.42f, 0.80f, -0.45f }, perp = { 0.75f, 0.35f, 0.3f };
+        sprite_basis(&x, diag, perp);
+        x.t[0] = 50.0f + bob; x.t[1] = -38.0f + fabsf(bob) * 0.6f; x.t[2] = -92.0f;
+        x.s = 0.46f;
         apply_swing(&x, 1.0f);
-        model_sword(&k, &x);
+        if (!add_sprite(&k, &x, SPR_ESPADA)) {
+            m3_ident(x.r);
+            m3_prerot(x.r, 1, 0.35f);
+            m3_prerot(x.r, 2, 0.55f);
+            m3_prerot(x.r, 0, -0.55f);
+            x.t[0] = 50.0f + bob; x.t[1] = -50.0f; x.t[2] = -82.0f;
+            x.s = 0.72f;
+            apply_swing(&x, 1.0f);
+            model_sword(&k, &x);
+        }
+    } else if (held == ITEM_ARCO && sprite_mesh(SPR_ARCO)) {
+        // sprite do arco: corda na diagonal (+X+Y) fica quase vertical, curva para a frente
+        f32 c = voxel_items_charge();
+        s32 drawing = sCharge > 0;
+        s32 spr = !drawing ? SPR_ARCO : (c >= 0.9f ? SPR_ARCO3 : (c >= 0.65f ? SPR_ARCO2 : SPR_ARCO1));
+        if (!sprite_mesh(spr)) spr = SPR_ARCO;
+        Vec3f diag = { drawing ? -0.10f : -0.35f, 1.0f, drawing ? 0.25f : 0.1f };
+        Vec3f perp = { drawing ? -0.25f : -0.6f, 0.0f, -1.0f };
+        sprite_basis(&x, diag, perp);
+        x.t[0] = drawing ? 6.0f : 32.0f + bob;
+        x.t[1] = drawing ? -14.0f : -30.0f;
+        x.t[2] = -80.0f;
+        x.s = 0.60f;
+        if (drawing && c >= 1.0f) {
+            x.t[0] += sinf(sFrame * 2.3f) * 0.7f;
+            x.t[1] += cosf(sFrame * 3.1f) * 0.7f;
+        }
+        apply_swing(&x, 0.5f);
+        add_sprite(&k, &x, spr);
     } else if (held == ITEM_ARCO) {
         f32 c = voxel_items_charge();
         f32 drawing = sCharge > 0 ? 1.0f : 0.0f;
@@ -830,11 +993,32 @@ static void build_hand_item(s32 idx, u8 item) {
     }
     for (s32 r = 0; r < 3; r++) { x.r[r][0] = ix[r]; x.r[r][1] = iy[r]; x.r[r][2] = iz[r]; }
     x.t[0] = 22.0f; x.t[1] = 0.0f; x.t[2] = 0.0f; // centro do punho
-    if (item == ITEM_ESPADA) {
-        // o cabo fica no punho: recua o modelo ate o meio do cabo
+    s32 usedSprite = FALSE;
+    {
+        struct Xform xs;
+        Vec3f diag, perp;
+        if (item == ITEM_ESPADA) {
+            // diagonal do sprite (cabo -> ponta) para frente e para cima
+            for (s32 i = 0; i < 3; i++) { diag[i] = fwd[i] + up[i] * 0.6f; perp[i] = up[i]; }
+        } else {
+            // corda (diagonal) em pe; a curva do arco aponta para frente
+            for (s32 i = 0; i < 3; i++) { diag[i] = up[i]; perp[i] = fwd[i]; }
+        }
+        sprite_basis(&xs, diag, perp);
+        xs.s = item == ITEM_ESPADA ? 4.2f : 3.6f;
+        xs.t[0] = 22.0f; xs.t[1] = 0.0f; xs.t[2] = 0.0f;
+        if (item == ITEM_ESPADA) {
+            // o cabo do sprite (canto inferior esquerdo) fica no punho
+            Vec3f off, local = { -30.0f, -30.0f, 0.0f };
+            xf_dir(&xs, local, off);
+            for (s32 i = 0; i < 3; i++) xs.t[i] -= off[i] * xs.s;
+        }
+        usedSprite = add_sprite(&k, &xs, item == ITEM_ESPADA ? SPR_ESPADA : SPR_ARCO);
+    }
+    if (!usedSprite && item == ITEM_ESPADA) {
         x.t[0] -= iy[0] * 11.0f * x.s; x.t[1] -= iy[1] * 11.0f * x.s; x.t[2] -= iy[2] * 11.0f * x.s;
         model_sword(&k, &x);
-    } else {
+    } else if (!usedSprite) {
         model_bow(&k, &x, 0.0f, FALSE);
     }
     Gfx *g = sHandGfx[idx];

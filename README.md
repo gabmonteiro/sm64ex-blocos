@@ -15,7 +15,7 @@ lutar com espada e arco e flecha, jogar em primeira pessoa e se mover com uma f�
   inimigos. Ficam salvos por fase e área em `blocos.dat`.
 - **9 tipos de bloco**: grama, terra, pedra, pedregulho, tábuas, tronco, tijolo, areia e folhas. As texturas são
   geradas por código (`tools/blocos_texturas.py`), com paleta própria.
-- **Espada de cristal**: golpe com animação de arco, alcance de ~3 blocos e acerto em até 3 inimigos à frente.
+- **Espada**: golpe com animação de arco, alcance de ~3 blocos e acerto em até 3 inimigos à frente.
 - **Arco e flecha**: segure para puxar e solte para atirar. A força depende do tempo puxando, e a flecha tem
   gravidade, arrasto no ar e na água, crava em blocos e no terreno e acerta inimigos.
 - **Primeira pessoa** (`F5`) com o item na mão, a animação de golpe e o balanço ao andar.
@@ -24,6 +24,9 @@ lutar com espada e arco e flecha, jogar em primeira pessoa e se mover com uma f�
 - **Mineiro**: personagem quadradão **original** (capacete amarelo com lanterna, camisa laranja, calça azul).
   Ele aproveita o esqueleto e as animações do jogo.
 - **HUD**: mira, hotbar de 9 slots com ícones, nome do item e barra de carga do arco.
+- **Suporte a texture packs**: importe um resource pack seu e os blocos, a espada, o arco (com os 3 estágios
+  de puxar) e a flecha passam a usar as texturas dele. Os itens na mão são **sprites extrudados** pixel a
+  pixel, então ficam iguais ao sprite do pack.
 
 Portas, placas, diálogos, canhões, postes, estrelas e inimigos continuam funcionando como no jogo original.
 
@@ -48,6 +51,28 @@ Portas, placas, diálogos, canhões, postes, estrelas e inimigos continuam funci
 
 Hotbar padrão: **espada, arco, grama, terra, pedra, pedregulho, tábuas, tronco, tijolo**. Em 3ª pessoa, a
 mira é o centro da tela.
+
+## Texture packs
+
+O mod vem com texturas próprias geradas por código. Para usar um texture pack no formato de resource pack
+(`assets/minecraft/textures/...`, formato novo 1.13+ ou antigo):
+
+```bash
+python3 tools/importar_texturepack.py ~/Downloads/MeuPack.zip    # também aceita uma pasta ou um .jar
+python3 tools/importar_texturepack.py --remover                   # volta para as texturas originais
+```
+
+As texturas vão para `~/.local/share/sm64ex/gfx/textures/blocos/`, que tem prioridade sobre as do mod, e
+não precisa recompilar. A grama e as folhas recebem a tinta verde de bioma, e as folhas ficam opacas. O que
+faltar no pack continua com a textura original do mod. **Nenhuma textura de pack é incluída neste
+repositório**: use apenas packs que você tem o direito de usar.
+
+| Mod | Arquivo no pack |
+|---|---|
+| grama (topo/lado), terra, pedra, pedregulho | `block/grass_block_top`, `grass_block_side` (+`_overlay`), `dirt`, `stone`, `cobblestone` |
+| tábuas, tronco (lado/topo), tijolo, areia, folhas | `block/oak_planks`, `oak_log`, `oak_log_top`, `bricks`, `sand`, `oak_leaves` |
+| espada, arco, arco puxando 1–3 | `item/diamond_sword`, `item/bow`, `item/bow_pulling_0..2` |
+| flecha (entidade, planos cruzados) | `entity/projectiles/arrow` |
 
 ## Física de movimento
 
@@ -91,7 +116,8 @@ Todo o mod está em `src/game/voxel*.c`, com ganchos pequenos no código do jogo
 | `src/game/voxel_items.c` | Espada e arco: modelos em código, animação de golpe, física das flechas, acerto em inimigos, item na mão em 1ª e 3ª pessoa |
 | `src/game/voxel_move.c` | Movimentação nova: duas ações próprias (chão/ar) que substituem as ações de locomoção do Mario |
 | `src/game/voxel_char.c` | Personagem Mineiro: troca as malhas do corpo por caixas na hora de renderizar e mantém o esqueleto e as animações |
-| `tools/blocos_texturas.py` | Gera as texturas procedurais dos blocos e os ícones dos itens |
+| `tools/blocos_texturas.py` | Gera as texturas procedurais dos blocos, os ícones dos itens, os estágios do arco e a flecha |
+| `tools/importar_texturepack.py` | Importa um resource pack para a pasta de saves (tinta de bioma, folhas opacas, orientação da flecha) |
 
 Ganchos no jogo:
 

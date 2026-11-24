@@ -330,7 +330,7 @@ static void geo_process_camera(struct GraphNodeCamera *node) {
         }
         voxelDl = voxel_items_world_dl();
         if (voxelDl != NULL) {
-            geo_append_display_list(voxelDl, LAYER_OPAQUE);
+            geo_append_display_list(voxelDl, LAYER_ALPHA);
         }
     }
     if (node->fnNode.node.children != 0) {
